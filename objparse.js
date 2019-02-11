@@ -28,10 +28,10 @@ const ObjParse = (function() {
     const N = 'n'.charCodeAt(0);
     const F = 'f'.charCodeAt(0);
     const E = 'e'.charCodeAt(0);
+    const T = 't'.charCodeAt(0);
 
-    const parseVert = function(u8, start, end, verts, vertCount) {
-        var vertOff = vertCount * 3;
-        while (u8[start] === 32) {
+    const parseVert = function(u8, start, end, verts, vertOff) {
+        while (u8[start] === SPACE) {
             start++;
         }
         var num = 0;
@@ -41,7 +41,7 @@ const ObjParse = (function() {
         var exp = 0;
         var expMag = 0;
         var expSign = 1;
-        for (var i = start; i < end; ++i) {
+        for (let i = start; i < end; ++i) {
             const c = u8[i];
             if (c === SPACE) {
                 verts[vertOff] = sign * num * Math.pow(10, decExpMag + expSign * expMag);
@@ -79,26 +79,19 @@ const ObjParse = (function() {
         verts[vertOff] = sign * num * Math.pow(10, decExpMag + expSign * expMag);
     };
 
-    const faceTargets = [null, null, null];
-    const targetCounts = [0, 0, 0];
-    const parseFace = function(u8, start, end, vidx, uidx, nidx, faceCount, vertCount, uvCount, normCount) {
-        var faceOff = faceCount * 3;
+    const parseFace = function(u8, start, end, faceOff, faceTargets, targetCounts) {
         while (u8[start] === 32) {
             start++;
         }
-        faceTargets[0] = vidx;
-        faceTargets[1] = uidx;
-        faceTargets[2] = nidx;
-        targetCounts[0] = vertCount;
-        targetCounts[1] = uvCount;
-        targetCounts[2] = normCount;
         var num = 0;
         var sign = 1;
+        var count = targetCounts[0];
+        var target = faceTargets[0];
         var faceTarget = 0;
-        for (var i = start; i < end; ++i) {
+        for (let i = start; i < end; ++i) {
             const c = u8[i];
             if (c === SPACE) {
-                faceTargets[faceTarget][faceOff] = (sign > 0 ? -1 : targetCounts[faceTarget]) + sign * num;
+                target[faceOff] = (sign > 0 ? num-1 : count-num);
                 num = 0;
                 sign = 1;
                 faceTarget = 0;
@@ -108,8 +101,10 @@ const ObjParse = (function() {
                     ++i;
                 }
                 --i;
+                count = targetCounts[0];
+                target = faceTargets[0];
             } else if (c === SLASH) {
-                faceTargets[faceTarget][faceOff] = (sign > 0 ? -1 : targetCounts[faceTarget]) + sign * num;
+                target[faceOff] = (sign > 0 ? num-1 : count-num);
                 num = 0;
                 sign = 1;
                 ++faceTarget;
@@ -120,15 +115,17 @@ const ObjParse = (function() {
                 }
                 --i;
                 if (faceTarget > 2) {
-                    faceTarget = 2; 
+                    throw new Error("Only vertex/uv/normal faces supported");
                 }
+                count = targetCounts[faceTarget];
+                target = faceTargets[faceTarget];
             } else if (c === MINUS) {
                 sign = -1;
             } else {
                 num = num * 10 + (c - ZERO);
             }
         }
-        faceTargets[faceTarget][faceOff] = (sign > 0 ? -1 : targetCounts[faceTarget]) + sign * num;
+        target[faceOff] = (sign > 0 ? num-1 : count-num);
     };
 
     const parse = function(u8) {
@@ -149,41 +146,56 @@ const ObjParse = (function() {
         let normCount = 0;
         let faceCount = 0;
 
+        const faceTargets = [vidx, uidx, nidx];
+        const targetCounts = [vertCount, uvCount, normCount];
+
         let lineStart = 0;
 
         for (let i = 0; i < u8.length; ++i) {
             while (i < u8.length && u8[i++] !== LF) { }
-            if (i <= u8.length) {
                 const lineEnd = u8[i-2] === CR ? i-2 : i-1;
-                let newLineStart = i;
                 const c0 = u8[lineStart];
                 const c1 = u8[lineStart+1];
                 const vert = c0 === V;
-                const norm = vert && c1 === N;
                 const face = c0 === F;
+                const norm = vert && c1 === N;
+                const uv = vert && c1 === T;
                 if (norm) {
-                    parseVert(u8, lineStart + 3, lineEnd, norms, normCount);
-                    normCount++;
+                    parseVert(u8, lineStart + 3, lineEnd, norms, normCount*3);
+                    ++normCount;
                     if (norms.length <= normCount * 3) {
                         norms = expandFloat32Array(norms);
                     }
+                } else if (uv) {
+                    parseVert(u8, lineStart + 3, lineEnd, uvs, uvCount*2);
+                    ++uvCount;
+                    if (uvs.length <= uvCount * 2) {
+                        uvs = expandFloat32Array(uvs);
+                    }
                 } else if (vert) {
-                    parseVert(u8, lineStart + 2, lineEnd, verts, vertCount);
-                    vertCount++;
+                    parseVert(u8, lineStart + 2, lineEnd, verts, vertCount*3);
+                    ++vertCount;
                     if (verts.length <= vertCount * 3) {
                         verts = expandFloat32Array(verts);
                     }
                 } else if (face) {
-                    parseFace(u8, lineStart + 2, lineEnd, vidx, uidx, nidx, faceCount, vertCount, uvCount, normCount);
-                    faceCount++;
+                    if  (targetCounts[0] === 0) {
+                        faceTargets[0] = vidx;
+                        faceTargets[1] = uidx;
+                        faceTargets[2] = nidx;
+                        targetCounts[0] = vertCount;
+                        targetCounts[1] = uvCount;
+                        targetCounts[2] = normCount;
+                    }
+                    parseFace(u8, lineStart + 2, lineEnd, faceCount*3, faceTargets, targetCounts);
+                    ++faceCount;
                     if (vidx.length <= faceCount * 3) {
-                        vidx = expandUint32Array(vidx);
-                        nidx = expandUint32Array(nidx);
-                        uidx = expandUint32Array(uidx);
+                        faceTargets[0] = vidx = expandUint32Array(vidx);
+                        faceTargets[1] = uidx = expandUint32Array(uidx);
+                        faceTargets[2] = nidx = expandUint32Array(nidx);
                     }
                 }
-                lineStart = newLineStart;
-            }
+                lineStart = i;
         }
         
         return {
@@ -211,77 +223,91 @@ const ObjParse = (function() {
     }
     
     const parseStream = function(u8, state) {
-        const length = u8.length;
+        for (let offset = 0; offset < u8.length; offset += 4096) {
+            const end = offset + Math.min(u8.length - offset, 4096);
 
-        const verts = state.verts;
-        const uvs = state.uvs;
-        const norms = state.norms;
-        const vidx = state.vidx;
-        const uidx = state.uidx;
-        const nidx = state.nidx;
+            const verts = state.verts;
+            const uvs = state.uvs;
+            const norms = state.norms;
+            const vidx = state.vidx;
+            const uidx = state.uidx;
+            const nidx = state.nidx;
 
-        let vertCount = state.vertCount;
-        let uvCount = state.uvCount;
-        let normCount = state.normCount;
-        let faceCount = state.faceCount;
+            let vertCount = state.vertCount;
+            let uvCount = state.uvCount;
+            let normCount = state.normCount;
+            let faceCount = state.faceCount;
 
-        const line = state.line;
-        let lineEnd = state.lineEnd;
-        let lineValid = state.lineValid;
+            const faceTargets = [vidx, uidx, nidx];
+            const targetCounts = [vertCount, uvCount, normCount];
 
-        for (let i = 0; i < length; ++i) {
-            while (i < length && u8[i] !== LF) {
-                if (lineEnd < line.length) {
-                    line[lineEnd++] = u8[i]; 
-                } else {
-                    lineValid = false;
-                }
-                ++i;
-            }
-            if (i < length) {
-                if (lineValid) {
-                    const lineEndC = line[lineEnd-2] === CR ? lineEnd-2 : lineEnd-1;
-                    const c0 = line[0];
-                    const c1 = line[1];
-                    const vert = c0 === V;
-                    const norm = vert && c1 === N;
-                    const face = c0 === F;
-                    if (norm) {
-                        parseVert(line, 3, lineEndC, norms, normCount);
-                        normCount++;
-                    } else if (vert) {
-                        parseVert(line, 2, lineEndC, verts, vertCount);
-                        vertCount++;
-                    } else if (face) {
-                        parseFace(line, 2, lineEndC, vidx, uidx, nidx, faceCount, vertCount, uvCount, normCount);
-                        faceCount++;
+            const line = state.line;
+            let lineEnd = state.lineEnd;
+            let lineValid = state.lineValid;
+
+            for (let i = offset; i < end; ++i) {
+                while (i < end && u8[i] !== LF) {
+                    if (lineEnd < line.length) {
+                        line[lineEnd++] = u8[i]; 
+                    } else {
+                        lineValid = false;
                     }
+                    ++i;
                 }
-                lineEnd = 0;
-                lineValid = true;
+                if (i < end && u8[i] === LF) {
+                    if (lineValid) {
+                        const lineEndC = line[lineEnd-2] === CR ? lineEnd-2 : lineEnd-1;
+                        const c0 = line[0];
+                        const c1 = line[1];
+                        const vert = c0 === V;
+                        const norm = vert && c1 === N;
+                        const uv = vert && c1 === T;
+                        const face = c0 === F;
+                        if (norm) {
+                            parseVert(line, 3, lineEndC, norms, normCount*3);
+                            normCount++;
+                        } else if (uv) {
+                            parseVert(line, 3, lineEndC, uvs, uvCount*2);
+                            uvCount++;
+                        } else if (vert) {
+                            parseVert(line, 2, lineEndC, verts, vertCount*3);
+                            vertCount++;
+                        } else if (face) {
+                            if (targetCounts[0] === 0) {
+                                targetCounts[0] = vertCount;
+                                targetCounts[1] = uvCount;
+                                targetCounts[2] = normCount;
+                            }
+                            parseFace(line, 2, lineEndC, faceCount*3, faceTargets, targetCounts);
+                            faceCount++;
+                        }
+                    }
+                    lineEnd = 0;
+                    lineValid = true;
+                }
             }
-        }
 
-        state.lineEnd = lineEnd;
-        state.lineValid = lineValid;
-        state.normCount = normCount;
-        state.faceCount = faceCount;
-        state.vertCount = vertCount;
-        state.uvCount = uvCount;
+            state.lineEnd = lineEnd;
+            state.lineValid = lineValid;
+            state.normCount = normCount;
+            state.faceCount = faceCount;
+            state.vertCount = vertCount;
+            state.uvCount = uvCount;
 
-        if (vertCount > verts.length / 3 - 32768) {
-            state.verts = expandFloat32Array(verts);
-        }
-        if (normCount > norms.length / 3 - 32768) {
-            state.norms = expandFloat32Array(norms);
-        }
-        if (uvCount > uvs.length / 2 - 32768) {
-            state.uvs = expandFloat32Array(uvs);
-        }
-        if (faceCount > vidx.length / 3 - 32768) {
-            state.vidx = expandUint32Array(vidx);
-            state.uidx = expandUint32Array(uidx);
-            state.nidx = expandUint32Array(nidx);
+            if (vertCount > verts.length / 3 - 32768) {
+                state.verts = expandFloat32Array(verts);
+            }
+            if (normCount > norms.length / 3 - 32768) {
+                state.norms = expandFloat32Array(norms);
+            }
+            if (uvCount > uvs.length / 2 - 32768) {
+                state.uvs = expandFloat32Array(uvs);
+            }
+            if (faceCount > vidx.length / 3 - 32768) {
+                state.vidx = expandUint32Array(vidx);
+                state.uidx = expandUint32Array(uidx);
+                state.nidx = expandUint32Array(nidx);
+            }
         }
     };
 
@@ -432,7 +458,7 @@ const ObjParse = (function() {
             flatUVs[k] = uvs[ui];
             flatUVs[k+1] = uvs[ui+1];
         }
-    return { vertices: flatVerts, uvs: flatUVs, normals: flatNorms };
+        return { vertices: flatVerts, uvs: flatUVs, normals: flatNorms };
     };
 
     const toFlat = function(obj, normals = false) {
@@ -497,5 +523,9 @@ const ObjParse = (function() {
         return flat;
     };
 
-    return { load, loadStream, parse, toFlat, computeNormals };
+    return { load, loadStream, parse, parseStream, toFlat, computeNormals, ParseState };
 })();
+
+if (typeof module !== 'undefined') {
+    module.exports = ObjParse;
+}
