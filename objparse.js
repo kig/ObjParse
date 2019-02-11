@@ -86,7 +86,7 @@ const ObjParse = (function() {
         var num = 0;
         var sign = 1;
         var count = targetCounts[0];
-        var target =  faceTargets[0];
+        var target = faceTargets[0];
         var faceTarget = 0;
         for (let i = start; i < end; ++i) {
             const c = u8[i];
@@ -179,7 +179,7 @@ const ObjParse = (function() {
                         verts = expandFloat32Array(verts);
                     }
                 } else if (face) {
-                    if  (faceTargets[0] === null) {
+                    if  (targetCounts[0] === 0) {
                         faceTargets[0] = vidx;
                         faceTargets[1] = uidx;
                         faceTargets[2] = nidx;
@@ -191,8 +191,8 @@ const ObjParse = (function() {
                     ++faceCount;
                     if (vidx.length <= faceCount * 3) {
                         faceTargets[0] = vidx = expandUint32Array(vidx);
-                        faceTargets[1] = nidx = expandUint32Array(nidx);
-                        faceTargets[2] = uidx = expandUint32Array(uidx);
+                        faceTargets[1] = uidx = expandUint32Array(uidx);
+                        faceTargets[2] = nidx = expandUint32Array(nidx);
                     }
                 }
                 lineStart = i;
@@ -526,4 +526,6 @@ const ObjParse = (function() {
     return { load, loadStream, parse, parseStream, toFlat, computeNormals, ParseState };
 })();
 
-module.exports = ObjParse;
+if (typeof module !== 'undefined') {
+    module.exports = ObjParse;
+}
